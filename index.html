@@ -964,27 +964,49 @@ function sma(arr,n){
   });
 }
 
+/* ── 名稱對照表 ── */
+const STOCK_NAME_MAP = {
+  "台積電": "2330", "鴻海": "2317", "聯發科": "2454", "廣達": "2382", "緯創": "3231",
+  "欣興": "3037", "南電": "8046", "景碩": "3189", "台光電": "2383", "台燿": "6274"
+};
+
 /* ── 資料抓取（你原本的 Python proxy 方式）── */
 async function fetchYahoo(code, interval, period) {
-  const currentHost = window.location.hostname;
-  const url = `http://${currentHost}:8000/fetch_yahoo?code=${encodeURIComponent(code)}&interval=${interval}&period=${period}`;
-  setStatus('loading','透過本地安全代理載入中…');
+  // 1. 處理名稱轉換
+  let symbol = STOCK_NAME_MAP[code] || code;
+  
+  // 2. 自動判斷上市 (.TW) 或 上櫃 (.TWO)，預設加上 .TW
+  if (/^\d+$/.test(symbol) && !symbol.includes('.')) {
+    symbol = symbol.length === 4 && parseInt(symbol) >= 8000 ? symbol + ".TWO" : symbol + ".TW";
+  }
+
+  const currentHost = window.location.hostname || "localhost";
+  const localUrl = `http://${currentHost}:8000/fetch_yahoo?code=${encodeURIComponent(symbol)}&interval=${interval}&period=${period}`;
+  const fallbackUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=${period}`)}`;
+
+  setStatus('loading',`正在查詢 ${symbol} ...`);
+  
   try {
-    const r = await fetch(url, {signal:AbortSignal.timeout(10000)});
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    const ch=data?.chart;
-    if(ch?.error)throw new Error(ch.error.description||'查詢失敗');
-    const res=ch?.result?.[0];
-    if(!res)throw new Error('找不到股票代碼，請確認代碼是否正確');
-    const ts=res.timestamp,q=res.indicators.quote[0];
-    const bars=ts.map((t,i)=>({
-      time:new Date(t*1000),ts:t,
-      open:q.open[i],high:q.high[i],low:q.low[i],close:q.close[i],volume:q.volume[i]
-    })).filter(b=>b.open!=null&&b.close!=null);
-    return {bars,meta:res.meta};
+    let resData;
+    try {
+      const r = await fetch(localUrl, {signal: AbortSignal.timeout(5000)});
+      resData = await r.json();
+    } catch (e) {
+      // 如果本地 Python 沒開，嘗試用線上代理
+      const r = await fetch(fallbackUrl);
+      const j = await r.json();
+      resData = JSON.parse(j.contents);
+    }
+
+    const res = resData.chart.result[0];
+    const ts = res.timestamp, q = res.indicators.quote[0];
+    const bars = ts.map((t, i) => ({
+      time: new Date(t * 1000), ts: t,
+      open: q.open[i], high: q.high[i], low: q.low[i], close: q.close[i], volume: q.volume[i]
+    })).filter(b => b.open != null);
+    return { bars, meta: res.meta };
   } catch(e) {
-    throw new Error('伺服器連線失敗。請確認 Python 代理伺服器是否已啟動。');
+    throw new Error('查無資料。請輸入正確代碼 (如: 2330) 或完整名稱。');
   }
 }
 

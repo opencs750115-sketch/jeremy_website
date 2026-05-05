@@ -1,7 +1,4 @@
-bash
-cat > /tmp/build_dashboard.py << 'PYEOF'
-# Build the complete HTML dashboard with clean JS
-html = r"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
@@ -1887,11 +1884,3 @@ go();
 </script>
 </body>
 </html>"""
-
-with open('/mnt/user-data/outputs/taiwan_stock_dashboard.html', 'w', encoding='utf-8') as f:
-    f.write(html)
-print('Written, size:', len(html))
-PYEOF
-python3 /tmp/build_dashboard.py
-Output
-Command argument is 108_688 bytes, exceeding the 100_000-byte per-argument limit. For large content, pipe via stdin or use a file-write API instead of embedding the content inline in the command. Argument preview: 'cat > /tmp/build_dashboard.py << \'PYEOF\'\n# Build the complete HTML dashboard with clean JS\nhtml = r"""<!DOCTYPE html>\n<html lang="zh-TW">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="w'

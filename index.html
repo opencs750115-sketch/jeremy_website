@@ -578,8 +578,32 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-size:13p
   <!-- Tab 2：籌碼 -->
   <div class="mob-page" id="tab-chips">
 
-    <!-- 三大法人 -->
+    <!-- 全台股成交排行 -->
     <div class="info-card" style="margin-top:8px">
+      <div class="info-card-title">🔥 全台股成交量排行 (前30)</div>
+      <div id="m-rank-loading" style="padding:20px; text-align:center; color:var(--dim);">載入排行中...</div>
+      <div id="m-rank-content" style="display:none; padding:0 4px 8px; overflow-x:auto">
+        <table class="mob-table">
+          <thead><tr><th>排名</th><th>名稱</th><th style="color:var(--accent)">成交量(張)</th><th>股價</th></tr></thead>
+          <tbody id="m-rank-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 產業族群資金流向 -->
+    <div class="info-card">
+      <div class="info-card-title">📊 熱門族群資金流向</div>
+      <div id="m-sector-loading" style="padding:20px; text-align:center; color:var(--dim);">分析族群中...</div>
+      <div id="m-sector-content" style="display:none; padding:0 4px 8px; overflow-x:auto">
+        <table class="mob-table">
+          <thead><tr><th>族群名稱</th><th>平均漲跌</th><th>領頭羊</th><th>狀態</th></tr></thead>
+          <tbody id="m-sector-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 三大法人 -->
+    <div class="info-card">
       <div class="info-card-title"><span>籌碼分析</span><span>三大法人（張）</span></div>
       <div style="padding:0 4px;overflow-x:auto">
         <table class="mob-table">
@@ -748,6 +772,24 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-size:13p
       <div class="panel-body"><canvas id="mc" role="img" aria-label="MACD指標"></canvas></div>
     </div>
   </div>
+
+    <!-- 成交量排行 (桌機) -->
+    <div class="rs">
+      <div class="rs-title">全台股成交量排行 (前30)</div>
+      <div style="padding:0 4px; max-height:200px; overflow-y:auto">
+        <table class="ft">
+          <thead><tr><th>排名</th><th>名稱</th><th>成交量</th><th>價格</th></tr></thead>
+          <tbody id="d-rank-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 族群分析 (桌機) -->
+    <div class="rs">
+      <div class="rs-title">產業族群資金流向</div>
+      <div style="padding:0 4px;" id="d-sector-list"></div>
+    </div>
+
   <div id="right">
     <div class="rs">
       <div class="rs-title">技術分析總覽</div>
@@ -970,14 +1012,27 @@ const STOCK_NAME_MAP = {
   "欣興": "3037", "南電": "8046", "景碩": "3189", "台光電": "2383", "台燿": "6274"
 };
 
+/* ── 產業族群定義 ── */
+const SECTOR_GROUPS = {
+  "AI伺服器": ["2330", "2382", "2317", "6669", "3231", "2376"],
+  "ABF載板": ["3037", "8046", "3189"],
+  "PCB族群": ["2313", "2367", "2383", "6274", "8039", "3044"],
+  "封測/測試": ["3711", "2449", "6147", "6239", "8150"],
+  "半導體設備": ["3131", "3583", "3680", "6196", "1560"],
+  "散熱模組": ["3017", "3324", "3338", "2421"]
+};
+
 /* ── 資料抓取（你原本的 Python proxy 方式）── */
 async function fetchYahoo(code, interval, period) {
   // 1. 處理名稱轉換
   let symbol = STOCK_NAME_MAP[code] || code;
   
-  // 2. 自動判斷上市 (.TW) 或 上櫃 (.TWO)，預設加上 .TW
+  // 2. 自動判斷上市 (.TW) 或 上櫃 (.TWO)
   if (/^\d+$/.test(symbol) && !symbol.includes('.')) {
-    symbol = symbol.length === 4 && parseInt(symbol) >= 8000 ? symbol + ".TWO" : symbol + ".TW";
+    const n = parseInt(symbol);
+    // 上櫃代碼規則：8開頭、5或6開頭多為上櫃
+    const isOtc = (n >= 8000) || (n >= 5000 && n < 6000) || (n >= 6000 && n < 6800);
+    symbol = isOtc ? symbol + ".TWO" : symbol + ".TW";
   }
 
   const currentHost = window.location.hostname || "localhost";
@@ -1034,7 +1089,8 @@ async function loadStock() {
     buildCharts(bars);
     updateAnalysis(bars);
     loadInstitutionalData(code); // 載入真實籌碼
-    loadSectorFlow();           // 載入類股流向
+    loadTopVolume();             // 新增：成交量排行
+    loadSectorFlow();             // 新增：產業族群分析
     if(refreshT)clearTimeout(refreshT);
     refreshT=setTimeout(()=>loadStock(), intv==='1d'?180000:600000);
     setStatus('live','最後更新：'+new Date().toLocaleString('zh-TW')+'　Yahoo Finance（約15分鐘延遲）');
@@ -1384,6 +1440,91 @@ function updateAnalysis(bars){
     ids.forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=rows.join('');});
   };
   makeMLRows(['ml-body','m-ml-body']);
+
+  // ── 新增：成交量排行邏輯 ──
+  async function loadTopVolume() {
+    try {
+      const url = `https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json`;
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const r = await fetch(proxyUrl);
+      const pj = await r.json();
+      const data = JSON.parse(pj.contents);
+      if(!data.data) return;
+      
+      // 成交股數在 index 2
+      let sorted = data.data.sort((a,b) => parseInt(b[2].replace(/,/g,'')) - parseInt(a[2].replace(/,/g,''))).slice(0, 30);
+      
+      const rows = sorted.map((row, idx) => {
+        const vol = Math.round(parseInt(row[2].replace(/,/g,'')) / 1000);
+        const color = parseFloat(row[9]) >= 0 ? 'var(--up)' : 'var(--down)';
+        return `<tr>
+          <td style="text-align:center">${idx+1}</td>
+          <td>${row[1]}</td>
+          <td style="color:var(--accent); font-weight:bold">${vol.toLocaleString()}</td>
+          <td style="color:${color}">${row[8]}</td>
+        </tr>`;
+      }).join('');
+      
+      document.getElementById('m-rank-tbody').innerHTML = rows;
+      document.getElementById('d-rank-tbody').innerHTML = rows;
+      document.getElementById('m-rank-loading').style.display = 'none';
+      document.getElementById('m-rank-content').style.display = 'block';
+    } catch(e) { console.error("排行載入失敗", e); }
+  }
+
+  // ── 新增：產業族群資金分析 ──
+  async function loadSectorFlow() {
+    try {
+      const url = `https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json`;
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const r = await fetch(proxyUrl);
+      const pj = await r.json();
+      const allData = JSON.parse(pj.contents).data;
+      
+      const sectorResults = [];
+      for (let sector in SECTOR_GROUPS) {
+        const codes = SECTOR_GROUPS[sector];
+        const stocks = allData.filter(d => codes.includes(d[0]));
+        if (stocks.length === 0) continue;
+        
+        let totalChg = 0;
+        stocks.forEach(s => {
+          const price = parseFloat(s[8]);
+          const chg = parseFloat(s[9]);
+          if (!isNaN(chg) && !isNaN(price)) totalChg += (chg / (price - chg)) * 100;
+        });
+        
+        const avgChg = totalChg / stocks.length;
+        sectorResults.push({ name: sector, chg: avgChg, lead: stocks[0][1] });
+      }
+      
+      const sorted = sectorResults.sort((a,b) => b.chg - a.chg);
+      
+      // 手機版表格
+      document.getElementById('m-sector-tbody').innerHTML = sorted.map(s => {
+        const c = s.chg >= 0 ? 'var(--up)' : 'var(--down)';
+        const status = s.chg > 1.5 ? '🔥 湧入' : s.chg < -1.5 ? '❄️ 撤出' : '震盪';
+        return `<tr>
+          <td>${s.name}</td>
+          <td style="color:${c}">${s.chg >= 0 ? '+' : ''}${s.chg.toFixed(2)}%</td>
+          <td>${s.lead}</td>
+          <td>${status}</td>
+        </tr>`;
+      }).join('');
+      
+      // 桌機版清單
+      document.getElementById('d-sector-list').innerHTML = sorted.map(s => {
+        const c = s.chg >= 0 ? 'var(--up)' : 'var(--down)';
+        return `<div style="display:flex; justify-content:space-between; padding:4px 8px; font-size:11px; border-bottom:1px solid var(--border)">
+          <span>${s.name}</span>
+          <span style="color:${c}; font-weight:bold">${s.chg >= 0 ? '+' : ''}${s.chg.toFixed(2)}%</span>
+        </div>`;
+      }).join('');
+
+      document.getElementById('m-sector-loading').style.display = 'none';
+      document.getElementById('m-sector-content').style.display = 'block';
+    } catch(e) { console.error("族群分析失敗", e); }
+  }
 
   // 燈號
   let sig='',sigCol='',sigSub='';
